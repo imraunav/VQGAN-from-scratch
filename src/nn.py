@@ -180,7 +180,7 @@ class Decoder(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.model(x)
+        return self.model(x).tanh()
 
 
 class CodeBook(nn.Module):
@@ -232,7 +232,7 @@ class VQGAN(nn.Module):
         en_ch=128,
         codebook_size=1024,
         n_decoder_resblock=2,
-        decoder_training_res=256,
+        decoder_training_res=16,
         decoder_attn_res=(32, 16),
         de_ch=128,
     ):
@@ -294,6 +294,42 @@ class VQGAN(nn.Module):
         return value
 
 
+"""
+PatchGAN Discriminator (https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/models/networks.py#L538)
+"""
+
+
+class Discriminator(nn.Module):
+    def __init__(self, img_channels, num_filters_last=64, n_layers=3):
+        super(Discriminator, self).__init__()
+
+        layers = [
+            nn.Conv2d(image_channels, num_filters_last, 4, 2, 1),
+            nn.LeakyReLU(0.2),
+        ]
+        num_filters_mult = 1
+
+        for i in range(1, n_layers + 1):
+            num_filters_mult_last = num_filters_mult
+            num_filters_mult = min(2**i, 8)
+            layers += [
+                nn.Conv2d(
+                    num_filters_last * num_filters_mult_last,
+                    num_filters_last * num_filters_mult,
+                    4,
+                    2 if i < n_layers else 1,
+                    1,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(num_filters_last * num_filters_mult),
+                nn.LeakyReLU(0.2, True),
+            ]
+
+        layers.append(nn.Conv2d(num_filters_last * num_filters_mult, 1, 4, 1, 1))
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.model(x)
 # if __name__ == "__main__":
 #     # en = Encoder(3, 3, attention_resolution=(32, 16))
 #     de = Decoder(3, 3, attention_resolution=(16,))
