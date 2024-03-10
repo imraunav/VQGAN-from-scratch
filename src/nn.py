@@ -220,6 +220,80 @@ class CodeBook(nn.Module):
         return z_q, min_encoding_indicies, loss
 
 
+class VQGAN(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        z_dim,
+        out_channels,
+        n_decoder_resblock=2,
+        encoder_training_res=256,
+        encoder_attn_res=(32, 16),
+        en_ch=128,
+        codebook_size=1024,
+        n_decoder_resblock=2,
+        decoder_training_res=256,
+        decoder_attn_res=(32, 16),
+        de_ch=128,
+    ):
+        super().__init__()
+        self.encoder = Encoder(
+            in_channels,
+            z_dim,
+            n_encoder_resblock,
+            encoder_training_res,
+            encoder_attn_res,
+            en_ch,
+        )
+        self.decoder = Decoder(
+            z_dim,
+            out_channels,
+            n_decoder_resblock,
+            decoder_training_res,
+            decoder_attn_res,
+            de_ch,
+        )
+        self.codebook = CodeBook(codebook_size, z_dim, beta)
+        self.pre_quant_conv = nn.Conv2d(z_dim, z_dim, 1)
+        self.post_quant_conv = nn.Conv2d(z_dim, z_dim, 1)
+
+    def encode(self, imgs):
+        z = self.encoder(imgs)
+        quant_conv = self.pre_quant_conv(z)
+        z_q, codebook_idx, q_loss = self.codebook(z)
+        return z_q, codebook_idx, q_loss
+
+    def decode(self, z):
+        post_quant_conv = self.post_quant_conv(z)
+        decoded_imgs = self.decoder(post_quant_conv)
+        return decoded_imgs
+
+    def forward(self, x):
+        z_q, codebook_idx, q_loss = self.encode(x)
+        decoded_imgs = self.decode(z_q)
+        return decoded_imgs, codebook_idx, q_loss
+
+    def calculate_lambda(self, perceptual_loss, gan_loss):
+        last_layer = self.decoder.model[-1]
+        last_layer_weight = last_layer.weight
+        perceptual_loss_grads = torch.autograd.grad(
+            perceptual_loss, last_layer_weight, retain_graph=True
+        )[0]
+        gan_loss_grads = torch.autograd.grad(
+            gan_loss, last_layer_weight, retain_graph=True
+        )[0]
+
+        lam = torch.norm(perceptual_loss_grads) / (torch.norm(gan_loss_grads) + 1e-4)
+        lam = torch.clamp(lam, 0, 1e4).detach()
+        return 0.8 * lam
+
+    @staticmethod
+    def adopt_weight(disc_factor, i, threshold, value=0):
+        if i < threshold:
+            disc_factor = value
+        return value
+
+
 # if __name__ == "__main__":
 #     # en = Encoder(3, 3, attention_resolution=(32, 16))
 #     de = Decoder(3, 3, attention_resolution=(16,))
